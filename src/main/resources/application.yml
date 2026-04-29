@@ -1,0 +1,50 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: openmrs-cce-receiver-adaptor
+
+openmrs:
+  rest:
+    base-url: ${OPENMRS_REST_BASE_URL:http://localhost:8080/openmrs/ws/rest/v1}
+    timeout: ${OPENMRS_REST_TIMEOUT:30000}
+  fhir:
+    base-url: ${OPENMRS_FHIR_BASE_URL:http://localhost:8080/openmrs/ws/fhir2/R4}
+    timeout: ${OPENMRS_FHIR_TIMEOUT:30000}
+  auth:
+    type: ${OPENMRS_AUTH_TYPE:basic}
+    username: ${OPENMRS_USERNAME:admin}
+    password: ${OPENMRS_PASSWORD:Admin123}
+    oauth2:
+      token-url: ${OPENMRS_OAUTH2_TOKEN_URL:}
+      client-id: ${OPENMRS_OAUTH2_CLIENT_ID:}
+      client-secret: ${OPENMRS_OAUTH2_CLIENT_SECRET:}
+      scope: ${OPENMRS_OAUTH2_SCOPE:}
+  identifier:
+    location-uuid: ${OPENMRS_IDENTIFIER_LOCATION_UUID:}
+    idgen-source-uuid: ${OPENMRS_IDGEN_SOURCE_UUID:}
+    type-name: ${OPENMRS_IDENTIFIER_TYPE_NAME:OpenMRS ID}
+  capability-refresh-ms: ${OPENMRS_CAPABILITY_REFRESH_MS:21600000}
+  provider:
+    fallback-name: ${OPENMRS_PROVIDER_FALLBACK_NAME:SPICE System Provider}
+    fallback-identifier: ${OPENMRS_PROVIDER_FALLBACK_IDENTIFIER:SPICE-SYSTEM}
+
+cce:
+  security:
+    enabled: ${CCE_SECURITY_ENABLED:false}
+    token: ${CCE_SECURITY_TOKEN:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    org.openphc.cce.receiver: ${LOG_LEVEL:INFO}
+    org.springframework.web.client: ${HTTP_LOG_LEVEL:WARN}

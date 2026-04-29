@@ -1,0 +1,251 @@
+# API Reference — OpenMRS CCE Receiver Adaptor
+
+## Overview
+
+The CCE Receiver Adaptor exposes a single inbound **FHIR R4 endpoint** for receiving clinical data from the **CCE Core Intelligence Service**. It also exposes standard **Spring Boot Actuator** endpoints for health and monitoring. The Intelligence Service produces FHIR R4 resources as action outputs and POSTs them to this endpoint.
+
+---
+
+## Inbound Endpoints
+
+### POST /api/v1/openmrs/fhir
+
+Receives a FHIR R4 Bundle or standalone resource, processes it through the enrichment and transformation pipeline, and routes each resource to OpenMRS.
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **URL** | `/api/v1/openmrs/fhir` |
+| **Content-Type** | `application/fhir+json` or `application/json` |
+| **Auth** | Depends on `cce.security.enabled` (none / Basic / JWT) |
+
+#### Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | `application/fhir+json` or `application/json` |
+| `X-Correlation-ID` | No | Correlation ID for request tracing (propagated to logs) |
+| `X-Source-System` | No | Source system identifier (e.g., `cce-intelligence`, `RHIE`, `SPICE`) |
+| `Authorization` | Conditional | Required when `cce.security.enabled=true` |
+
+#### Request Body
+
+FHIR R4 Bundle (transaction or batch):
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:patient-1",
+      "resource": {
+        "resourceType": "Patient",
+        "name": [{"family": "Doe", "given": ["John"]}],
+        "gender": "male",
+        "birthDate": "1990-01-15",
+        "identifier": [
+          {"system": "NID", "value": "1199080012345678"}
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Patient"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:encounter-1",
+      "resource": {
+        "resourceType": "Encounter",
+        "status": "finished",
+        "type": [{"coding": [{"display": "CONSULTATION_ENCOUNTER"}]}],
+        "subject": {"reference": "urn:uuid:patient-1"},
+        "period": {"start": "2026-04-16T09:00:00Z"}
+      },
+      "request": {
+        "method": "POST",
+        "url": "Encounter"
+      }
+    }
+  ]
+}
+```
+
+Or a standalone FHIR resource:
+
+```json
+{
+  "resourceType": "Patient",
+  "name": [{"family": "Doe", "given": ["John"]}],
+  "gender": "male",
+  "birthDate": "1990-01-15"
+}
+```
+
+#### Response — Success (All Resources)
+
+**Status:** `202 Accepted`
+
+```json
+{
+  "timestamp": "2026-04-16T10:30:00.000Z",
+  "totalEntries": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    {
+      "resourceType": "Patient",
+      "resourceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "route": "rest",
+      "status": "created",
+      "httpStatus": 201
+    },
+    {
+      "resourceType": "Encounter",
+      "resourceId": "f0e1d2c3-b4a5-6789-0123-456789abcdef",
+      "route": "rest",
+      "status": "created",
+      "httpStatus": 201
+    }
+  ]
+}
+```
+
+#### Response — Partial Failure
+
+**Status:** `207 Multi-Status`
+
+```json
+{
+  "timestamp": "2026-04-16T10:30:00.000Z",
+  "totalEntries": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "results": [
+    {
+      "resourceType": "Patient",
+      "resourceId": "a1b2c3d4-...",
+      "route": "rest",
+      "status": "created",
+      "httpStatus": 201
+    },
+    {
+      "resourceType": "Observation",
+      "resourceId": null,
+      "route": "rest",
+      "status": "failed",
+      "httpStatus": 400,
+      "errorMessage": "Unresolvable concept: system=http://loinc.org, code=UNKNOWN-CODE"
+    },
+    {
+      "resourceType": "Encounter",
+      "resourceId": "f0e1d2c3-...",
+      "route": "rest",
+      "status": "created",
+      "httpStatus": 201
+    }
+  ]
+}
+```
+
+#### Error Responses
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | Invalid JSON body |
+| `401 Unauthorized` | Missing or invalid credentials (when security enabled) |
+| `422 Unprocessable Entity` | Valid JSON but invalid FHIR structure |
+
+---
+
+## Actuator Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/actuator/health` | Overall health status |
+| GET | `/actuator/health/liveness` | Liveness probe |
+| GET | `/actuator/health/readiness` | Readiness probe |
+| GET | `/actuator/prometheus` | Prometheus metrics |
+| GET | `/actuator/metrics` | Metrics (JSON) |
+| GET | `/actuator/info` | Application info |
+
+---
+
+## Custom Metrics
+
+| Metric Name | Type | Tags | Description |
+|-------------|------|------|-------------|
+| `cce.receiver.requests.received` | Counter | `source` | Inbound requests received |
+| `cce.receiver.resources.routed` | Counter | `resourceType`, `route`, `status` | Resources routed to REST/FHIR |
+| `cce.receiver.processing.total` | Timer | — | End-to-end processing duration |
+| `cce.receiver.rest.latency` | Timer | `resourceType`, `method` | REST outbound call latency |
+| `cce.receiver.fhir.latency` | Timer | `resourceType`, `method` | FHIR outbound call latency |
+| `cce.receiver.transform.errors` | Counter | `resourceType` | Transformation failures |
+
+---
+
+## OpenMRS APIs Consumed
+
+### REST v1 API (`/ws/rest/v1`) — Primary
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/patient` | Create patient |
+| POST | `/encounter` | Create encounter |
+| POST | `/obs` | Create observation |
+| POST | `/condition` | Create condition |
+| POST | `/allergy` | Create allergy |
+| POST | `/order` | Create test order or drug order |
+| POST | `/visit` | Create visit |
+| POST | `/provider` | Create provider |
+| POST | `/location` | Create location |
+| POST | `/drug` | Create drug |
+| POST | `/obs` | Create immunization (as obs group) |
+| POST | `/patientidentifiertype` | Create identifier type (on-demand) |
+| GET | `/patient?identifier={id}` | Search patient by identifier |
+| GET | `/provider?q={id}` | Search provider |
+| GET | `/location?q={id}` | Search location |
+| GET | `/location?tag=Login+Location` | Discover login locations |
+| GET | `/concept?source={src}&code={code}` | Resolve concept |
+| GET | `/patientidentifiertype` | Discover identifier types |
+| GET | `/encountertype` | Discover encounter types |
+| GET | `/visittype` | Discover visit types |
+| GET | `/visit?patient={uuid}&includeInactive=false` | Find active visits |
+| GET | `/idgen/identifiersource` | Discover identifier sources |
+| GET | `/personattributetype` | Discover person attribute types |
+
+### FHIR R4 API (`/ws/fhir2/R4`) — Fallback
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/Procedure` | Create procedure |
+| POST | `/DiagnosticReport` | Create diagnostic report |
+| POST | `/MedicationDispense` | Create medication dispense |
+| POST | `/MedicationAdministration` | Create medication administration |
+| POST | `/Task` | Create task |
+| POST | `/Consent` | Create consent |
+| PUT | `/{ResourceType}/{id}` | Update resource (fallback path) |
+
+---
+
+## Supported FHIR Resource Types
+
+| Resource Type | Route | Notes |
+|---|---|---|
+| Patient | **REST** `/patient` | Full identifier enrichment, LuhnMod30 |
+| Encounter | **REST** `/encounter` | Auto-links to active Visit or creates new one |
+| Observation | **REST** `/obs` | Blood pressure component → grouped obs |
+| Condition | **REST** `/condition` | ICD-11 → CIEL concept resolution |
+| AllergyIntolerance | **REST** `/allergy` | NPC/SNOMED allergen mapping |
+| ServiceRequest | **REST** `/order` | → `testorder` |
+| MedicationRequest | **REST** `/order` | → `drugorder` with dosage mapping |
+| Location | **REST** `/location` | Direct mapping |
+| Practitioner | **REST** `/provider` | Direct mapping |
+| Medication | **REST** `/drug` | Direct mapping |
+| Immunization | **REST** `/obs` | Modelled as obs group in OpenMRS; transformed to REST obs payload |
+| Procedure | **FHIR** `/Procedure` | No REST endpoint; stored as obs by fhir2 module |
+| DiagnosticReport | **FHIR** `/DiagnosticReport` | No REST endpoint; stored as Encounter + grouped Obs |
+| MedicationDispense | **FHIR** `/MedicationDispense` | No REST endpoint; requires fhir2 dispensing |
+| MedicationAdministration | **FHIR** `/MedicationAdministration` | No REST endpoint; requires fhir2 module |
+| Task | **FHIR** `/Task` | FHIR-native `fhir_task` table |
+| Consent | **FHIR** `/Consent` | No REST endpoint; requires fhir2 module |

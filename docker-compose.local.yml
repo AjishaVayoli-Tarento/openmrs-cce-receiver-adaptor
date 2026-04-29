@@ -1,0 +1,46 @@
+# Local development compose — runs only the CCE Receiver Adaptor
+# and connects to an existing O3 instance on the "o3_default" network.
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml up --build
+#
+
+services:
+  openmrs-cce-receiver-adaptor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openmrs-cce-receiver-adaptor
+    ports:
+      - "8084:8080"
+    environment:
+      # Point to the O3 gateway container on the shared network
+      OPENMRS_REST_BASE_URL: ${OPENMRS_REST_BASE_URL:-http://o3-gateway-1:80/openmrs/ws/rest/v1}
+      OPENMRS_FHIR_BASE_URL: ${OPENMRS_FHIR_BASE_URL:-http://o3-gateway-1:80/openmrs/ws/fhir2/R4}
+      OPENMRS_REST_TIMEOUT: "30000"
+      OPENMRS_FHIR_TIMEOUT: "30000"
+      OPENMRS_AUTH_TYPE: basic
+      OPENMRS_USERNAME: ${OPENMRS_USERNAME:-admin}
+      OPENMRS_PASSWORD: ${OPENMRS_PASSWORD:-Admin123}
+      OPENMRS_IDENTIFIER_LOCATION_UUID: ""
+      OPENMRS_IDGEN_SOURCE_UUID: ""
+      OPENMRS_IDENTIFIER_TYPE_NAME: "OpenMRS ID"
+      OPENMRS_CAPABILITY_REFRESH_MS: "21600000"
+      CCE_SECURITY_ENABLED: "false"
+      CCE_SECURITY_TOKEN: ""
+      LOG_LEVEL: INFO
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - o3_network
+
+networks:
+  o3_network:
+    external: true
+    name: o3_default
