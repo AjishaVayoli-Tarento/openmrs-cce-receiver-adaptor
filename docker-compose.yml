@@ -3,8 +3,8 @@ services:
   # ─── O3 Reference Application ───────────────────────────────────────
 
   gateway:
-    image: openmrs/openmrs-reference-application-3-gateway:${O3_TAG:-qa}
-    restart: unless-stopped
+    image: openmrs/openmrs-reference-application-3-gateway:${TAG:-qa}
+    restart: "unless-stopped"
     depends_on:
       - frontend
       - backend
@@ -17,13 +17,15 @@ services:
           cpus: '0.25'
 
   frontend:
-    image: openmrs/openmrs-reference-application-3-frontend:${O3_TAG:-qa}
-    restart: unless-stopped
+    image: openmrs/openmrs-reference-application-3-frontend:${TAG:-qa}
+    restart: "unless-stopped"
     environment:
       SPA_PATH: /openmrs/spa
       API_URL: /openmrs
       SPA_CONFIG_URLS: /openmrs/spa/config-core_demo.json
       SPA_DEFAULT_LOCALE:
+    volumes:
+      - ./frontend/config-core_demo.json:/usr/share/nginx/html/config-core_demo.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       timeout: 5s
@@ -36,8 +38,8 @@ services:
           cpus: '0.25'
 
   backend:
-    image: openmrs/openmrs-reference-application-3-backend:${O3_TAG:-qa}
-    restart: unless-stopped
+    image: openmrs/openmrs-reference-application-3-backend:${TAG:-qa}
+    restart: "unless-stopped"
     depends_on:
       - db
     environment:
@@ -48,7 +50,7 @@ services:
       OMRS_CONFIG_CONNECTION_DATABASE: openmrs
       OMRS_CONFIG_CONNECTION_USERNAME: ${OMRS_DB_USER:-openmrs}
       OMRS_CONFIG_CONNECTION_PASSWORD: ${OMRS_DB_PASSWORD:-openmrs}
-      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1536m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m"
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1536m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m"      
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/openmrs"]
       timeout: 5s
@@ -60,9 +62,10 @@ services:
           memory: 2g
           cpus: '2.00'
 
+  # MariaDB
   db:
     image: mariadb:10.11.7
-    restart: unless-stopped
+    restart: "unless-stopped"
     command: "mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci"
     healthcheck:
       test: "mysql --user=${OMRS_DB_USER:-openmrs} --password=${OMRS_DB_PASSWORD:-openmrs} --execute \"SHOW DATABASES;\""
@@ -119,5 +122,9 @@ services:
       start_period: 30s
 
 volumes:
-  openmrs-data: ~
-  db-data: ~
+  openmrs-data:
+    external: true
+    name: o3_openmrs-data
+  db-data:
+    external: true
+    name: o3_db-data
