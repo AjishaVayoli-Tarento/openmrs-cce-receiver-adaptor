@@ -26,6 +26,8 @@ Receives a FHIR R4 Bundle or standalone resource, processes it through the enric
 | `Content-Type` | Yes | `application/fhir+json` or `application/json` |
 | `X-Correlation-ID` | No | Correlation ID for request tracing (propagated to logs) |
 | `X-Source-System` | No | Source system identifier (e.g., `cce-intelligence`, `RHIE`, `SPICE`) |
+| `X-CCE-Intelligence-Delivery-Id` | No | Per-delivery identifier emitted by `cce-intelligence-service`; logged for end-to-end tracing across the two services |
+| `X-CCE-Intelligence-Event-Id` | No | Originating intelligence-event identifier; logged for end-to-end tracing |
 | `Authorization` | Conditional | Required when `cce.security.enabled=true` |
 
 #### Request Body
@@ -148,13 +150,20 @@ Or a standalone FHIR resource:
 }
 ```
 
-#### Error Responses
+#### Response Status Code Matrix
 
-| Status | Condition |
-|--------|-----------|
-| `400 Bad Request` | Invalid JSON body |
-| `401 Unauthorized` | Missing or invalid credentials (when security enabled) |
-| `422 Unprocessable Entity` | Valid JSON but invalid FHIR structure |
+The adaptor returns one of the following status codes based on the per-resource processing outcome. This matrix is the contract that `cce-intelligence-service` uses to decide whether to retry a delivery.
+
+| Status | Condition | Caller action |
+|--------|-----------|---------------|
+| `202 Accepted` | All resources in the bundle processed successfully | Mark delivery complete |
+| `207 Multi-Status` | Bundle partially succeeded — at least one resource succeeded **and** at least one failed | Inspect `results[]`; do **not** retry the whole delivery |
+| `422 Unprocessable Entity` | All resources failed and **none** of the failures look transient (validation / mapping / 4xx from OpenMRS) | Do **not** retry; surface to operator |
+| `503 Service Unavailable` | All resources failed and **at least one** failure is transient (HTTP 5xx, 408, 429, or status `0` with a transport-error message such as `timeout`, `unavailable`, `unreachable`, `refused`, `connect`) | Retry with exponential backoff |
+| `400 Bad Request` | Body is not valid JSON / not parseable as a FHIR resource | Do not retry; fix payload |
+| `401 Unauthorized` | Missing or invalid credentials (when `cce.security.enabled=true`) | Re-auth and retry |
+
+> **Retryable-failure classification.** A failure is treated as retryable only when the underlying call indicates a transient server-side or network problem. Definitive client errors (4xx with status, validation rejections from OpenMRS) are **not** retried, even if their stack-trace bodies happen to mention transport-level keywords. See `InboundResourceController#hasRetryableFailure` for the exact rules.
 
 ---
 
