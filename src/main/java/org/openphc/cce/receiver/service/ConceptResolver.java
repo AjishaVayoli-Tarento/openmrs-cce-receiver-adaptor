@@ -257,15 +257,15 @@ public class ConceptResolver {
     }
 
     /**
-     * Auto-creates a concept in OpenMRS with Test class and Text datatype.
+     * Auto-creates a concept in OpenMRS with Misc Order class and Text datatype.
      * Used when no existing concept matches the given name.
      */
     public String autoCreateConcept(String name) {
         if (name == null || name.isBlank()) return null;
 
         try {
-            // Test concept class (compatible with Test Order type)
-            String conceptClassUuid = "8d4907b2-c2cc-11de-8d13-0010c6dffd0f";
+            // Misc Order concept class (compatible with Referral Order type)
+            String conceptClassUuid = "8d492ee0-c2cc-11de-8d13-0010c6dffd0f";
             // Text datatype (allows entering results in O3)
             String datatypeUuid = "8d4a4ab4-c2cc-11de-8d13-0010c6dffd0f";
 

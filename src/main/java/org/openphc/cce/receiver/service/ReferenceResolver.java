@@ -111,7 +111,7 @@ public class ReferenceResolver {
     private boolean verifyExists(String endpoint, String uuid) {
         try {
             restClient.get()
-                    .uri("{endpoint}/{uuid}", endpoint, uuid)
+                    .uri(endpoint + "/{uuid}", uuid)
                     .retrieve()
                     .body(String.class);
             return true;
@@ -126,7 +126,7 @@ public class ReferenceResolver {
         try {
             String searchParam = "Patient".equals(resourceType) ? "identifier" : "q";
             String response = restClient.get()
-                    .uri("{endpoint}?{param}={value}&v=default", endpoint, searchParam, identifier)
+                    .uri(endpoint + "?{param}={value}&v=default", searchParam, identifier)
                     .retrieve()
                     .body(String.class);
 

@@ -3,6 +3,7 @@ package org.openphc.cce.receiver.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.openphc.cce.receiver.config.ReferralProperties;
 import org.openphc.cce.receiver.model.ResourceEntry;
 import org.openphc.cce.receiver.model.RoutingResult;
 import org.slf4j.Logger;
@@ -26,6 +27,7 @@ public class ResourceRouter {
     private final FhirToRestTransformer fhirToRestTransformer;
     private final OpenMrsRestClient openMrsRestClient;
     private final OpenMrsFhirClient openMrsFhirClient;
+    private final ReferralProperties referralProperties;
 
     private static final Set<String> FHIR_ONLY_TYPES = Set.of(
             "Task", "DiagnosticReport", "Procedure",
@@ -47,7 +49,8 @@ public class ResourceRouter {
                           VisitManager visitManager,
                           FhirToRestTransformer fhirToRestTransformer,
                           OpenMrsRestClient openMrsRestClient,
-                          OpenMrsFhirClient openMrsFhirClient) {
+                          OpenMrsFhirClient openMrsFhirClient,
+                          ReferralProperties referralProperties) {
         this.referenceResolver = referenceResolver;
         this.conceptResolver = conceptResolver;
         this.requiredFieldEnricher = requiredFieldEnricher;
@@ -56,6 +59,7 @@ public class ResourceRouter {
         this.fhirToRestTransformer = fhirToRestTransformer;
         this.openMrsRestClient = openMrsRestClient;
         this.openMrsFhirClient = openMrsFhirClient;
+        this.referralProperties = referralProperties;
     }
 
     public List<RoutingResult> routeAll(List<ResourceEntry> entries) {
@@ -113,7 +117,24 @@ public class ResourceRouter {
 
         // Ensure encounter for standalone orders
         if ("ServiceRequest".equals(resourceType) || "MedicationRequest".equals(resourceType)) {
-            String encounterUuid = visitManager.ensureEncounterForOrder(resourceNode, perRequestVisitCache);
+            String encounterUuid = null;
+
+            // Referral-aware path: only ServiceRequests detected as referrals AND only when enabled.
+            // MedicationRequests and non-referral ServiceRequests keep the existing generic flow.
+            if ("ServiceRequest".equals(resourceType)
+                    && referralProperties.isEnabled()
+                    && fhirToRestTransformer.isReferral(resourceNode)) {
+                encounterUuid = visitManager.ensureReferralEncounterForOrder(resourceNode, perRequestVisitCache);
+                if (encounterUuid != null) {
+                    log.debug("ServiceRequest routed via referral flow (encounter={})", encounterUuid);
+                } else {
+                    log.warn("Referral flow could not create encounter — falling back to generic flow");
+                }
+            }
+
+            if (encounterUuid == null) {
+                encounterUuid = visitManager.ensureEncounterForOrder(resourceNode, perRequestVisitCache);
+            }
             if (encounterUuid != null) {
                 ObjectNode encounterRef = objectMapper.createObjectNode();
                 encounterRef.put("reference", "Encounter/" + encounterUuid);

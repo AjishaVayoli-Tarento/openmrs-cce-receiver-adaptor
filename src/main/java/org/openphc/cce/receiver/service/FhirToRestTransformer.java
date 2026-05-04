@@ -447,7 +447,17 @@ public class FhirToRestTransformer {
 
     private TransformResult transformServiceRequest(ObjectNode fhir) {
         ObjectNode rest = objectMapper.createObjectNode();
-        rest.put("type", "testorder");
+
+        // Determine order type: if ticket-type is "medicalReview" (SPICE referral), use Referral order type
+        String orderType = determineOrderType(fhir);
+        rest.put("type", orderType);
+        if ("order".equals(orderType)) {
+            // Generic order requires explicit orderType UUID — use Referral
+            String referralOrderTypeUuid = discoverReferralOrderTypeUuid();
+            if (referralOrderTypeUuid != null) {
+                rest.put("orderType", referralOrderTypeUuid);
+            }
+        }
 
         // Patient — resolve UUID or look up by identifier
         String patientRef = fhir.path("subject").path("reference").asText("");
@@ -456,7 +466,7 @@ public class FhirToRestTransformer {
 
         // Encounter — resolve UUID or create new one for the order
         String encounterRef = fhir.path("encounter").path("reference").asText("");
-        String authoredOn = fhir.path("authoredOn").asText("");
+        String authoredOn = normalizeAuthoredOnToNotBeforeNow(fhir.path("authoredOn").asText(""));
         String encounterUuid = resolveEncounterUuid(encounterRef, patientUuid, authoredOn);
         if (encounterUuid != null) rest.put("encounter", encounterUuid);
 
@@ -494,7 +504,40 @@ public class FhirToRestTransformer {
         // Care setting (default to outpatient)
         rest.put("careSetting", "OUTPATIENT");
 
+        // Instructions — patientInstruction (preferred) or note[0].text
+        String instructions = fhir.path("patientInstruction").asText("");
+        if (instructions.isBlank()) {
+            JsonNode notes = fhir.path("note");
+            if (notes.isArray() && !notes.isEmpty()) {
+                instructions = notes.get(0).path("text").asText("");
+            }
+        }
+        if (!instructions.isBlank()) rest.put("instructions", instructions);
+
+        // Accession number — use source ServiceRequest id or first identifier value
+        String accessionNumber = extractAccessionNumber(fhir);
+        if (accessionNumber != null && !accessionNumber.isBlank()) {
+            rest.put("accessionNumber", accessionNumber);
+        }
+
         return new TransformResult("/order", rest.toString());
+    }
+
+    private String extractAccessionNumber(ObjectNode fhir) {
+        // Prefer the source FHIR ServiceRequest id (cross-system reference)
+        String id = fhir.path("id").asText("");
+        if (!id.isBlank() && !isUuid(id)) {
+            return id;
+        }
+        // Fall back to first identifier value
+        JsonNode identifiers = fhir.path("identifier");
+        if (identifiers.isArray()) {
+            for (JsonNode ident : identifiers) {
+                String value = ident.path("value").asText("");
+                if (!value.isBlank()) return value;
+            }
+        }
+        return id.isBlank() ? null : id;
     }
 
     private TransformResult transformMedicationRequest(ObjectNode fhir) {
@@ -558,7 +601,7 @@ public class FhirToRestTransformer {
         }
 
         // Authored on
-        String authoredOn = fhir.path("authoredOn").asText("");
+        String authoredOn = normalizeAuthoredOnToNotBeforeNow(fhir.path("authoredOn").asText(""));
         if (!authoredOn.isBlank()) rest.put("dateActivated", authoredOn);
 
         rest.put("careSetting", "OUTPATIENT");
@@ -673,6 +716,30 @@ public class FhirToRestTransformer {
 
     private boolean isUuid(String value) {
         return value != null && value.matches(UUID_REGEX);
+    }
+
+    /**
+     * If the inbound FHIR {@code authoredOn} timestamp is in the past relative to the server clock,
+     * coerce it to "now". Real-world callers always emit a timestamp slightly in the past (build +
+     * dispatch latency), but OpenMRS validates {@code Order.dateActivated <= now} AND
+     * {@code Encounter.encounterDatetime (= now) <= Order.dateActivated}, so anything before "now"
+     * fails. Returning current UTC keeps both constraints satisfied. Blank input passes through.
+     */
+    private String normalizeAuthoredOnToNotBeforeNow(String authoredOn) {
+        if (authoredOn == null || authoredOn.isBlank()) return authoredOn;
+        try {
+            Instant parsed = ZonedDateTime.parse(authoredOn).toInstant();
+            Instant now = Instant.now();
+            if (parsed.isBefore(now)) {
+                String coerced = OPENMRS_DATE_FORMAT.withZone(ZoneOffset.UTC).format(now);
+                log.debug("Coerced authoredOn {} -> {} (was before server now)", authoredOn, coerced);
+                return coerced;
+            }
+            return authoredOn;
+        } catch (Exception e) {
+            log.debug("Could not parse authoredOn '{}', leaving as-is: {}", authoredOn, e.getMessage());
+            return authoredOn;
+        }
     }
 
     /**
@@ -967,6 +1034,154 @@ public class FhirToRestTransformer {
             return discoveredConfig.getEncounterTypeCache().get(text);
         }
         return null;
+    }
+
+    private volatile String cachedReferralOrderTypeUuid;
+
+    /**
+     * Discovers the "Referral" OrderType UUID, creating it if it doesn't exist.
+     * Referral orders use the generic {@code org.openmrs.Order} java class.
+     */
+    private String discoverReferralOrderTypeUuid() {
+        if (cachedReferralOrderTypeUuid != null) return cachedReferralOrderTypeUuid;
+        try {
+            String response = restClient.get()
+                    .uri("/ordertype?v=default")
+                    .retrieve()
+                    .body(String.class);
+            JsonNode results = objectMapper.readTree(response).path("results");
+            if (results.isArray()) {
+                for (JsonNode ot : results) {
+                    if ("Referral".equalsIgnoreCase(ot.path("name").asText(""))) {
+                        cachedReferralOrderTypeUuid = ot.path("uuid").asText(null);
+                        log.info("Discovered Referral OrderType UUID: {}", cachedReferralOrderTypeUuid);
+                        return cachedReferralOrderTypeUuid;
+                    }
+                }
+            }
+            // Not found — auto-create
+            cachedReferralOrderTypeUuid = createReferralOrderType();
+            return cachedReferralOrderTypeUuid;
+        } catch (Exception e) {
+            log.warn("Failed to discover Referral OrderType: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String createReferralOrderType() {
+        try {
+            ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("name", "Referral");
+            payload.put("description", "Order for patient referrals to other services or facilities");
+            payload.put("javaClassName", "org.openmrs.Order");
+            payload.putArray("conceptClasses");  // empty — accepts any concept class
+
+            String body = objectMapper.writeValueAsString(payload);
+            log.info("Auto-creating 'Referral' OrderType in OpenMRS");
+
+            String response = restClient.post()
+                    .uri("/ordertype")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+
+            String uuid = objectMapper.readTree(response).path("uuid").asText(null);
+            log.info("Auto-created 'Referral' OrderType with UUID: {}", uuid);
+            return uuid;
+        } catch (Exception e) {
+            log.warn("Failed to auto-create Referral OrderType: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Analyses a ServiceRequest to determine the OpenMRS order type.
+     * <p>
+     * A ServiceRequest is treated as a referral if ANY of the following are true:
+     * <ul>
+     *   <li>{@code requisition.value == "medicalReview"} (SPICE convention)</li>
+     *   <li>any {@code identifier} has {@code system} ending in {@code /patient-status}
+     *       or {@code /patient-current-status} with value {@code "Referred"}</li>
+     *   <li>any {@code category.coding[]} has code/display containing "referral"
+     *       (FHIR standard convention, e.g. SNOMED 3457005)</li>
+     *   <li>{@code code.coding[]} has code/display containing "referral"</li>
+     * </ul>
+     * Otherwise defaults to {@code "testorder"}.
+     */
+    private String determineOrderType(ObjectNode fhir) {
+        return isReferral(fhir) ? "order" : "testorder";
+    }
+
+    /**
+     * Returns {@code true} if the given FHIR ServiceRequest should be treated as
+     * a referral (Referral OrderType in OpenMRS) using the same 4-signal logic
+     * documented on {@link #determineOrderType(ObjectNode)}. Exposed so the
+     * routing layer can apply referral-specific visit/encounter/queue handling.
+     */
+    public boolean isReferral(ObjectNode fhir) {
+        // 1. SPICE: requisition.ticket-type == medicalReview
+        JsonNode requisition = fhir.path("requisition");
+        if (!requisition.isMissingNode()) {
+            String system = requisition.path("system").asText("");
+            String value = requisition.path("value").asText("");
+            if (system.endsWith("/ticket-type") && "medicalReview".equalsIgnoreCase(value)) {
+                log.debug("Detected referral via requisition.ticket-type=medicalReview");
+                return true;
+            }
+        }
+
+        // 2. SPICE: identifier with patient-status / patient-current-status = Referred
+        JsonNode identifiers = fhir.path("identifier");
+        if (identifiers.isArray()) {
+            for (JsonNode id : identifiers) {
+                String system = id.path("system").asText("");
+                String value = id.path("value").asText("");
+                if ((system.endsWith("/patient-status") || system.endsWith("/patient-current-status"))
+                        && "Referred".equalsIgnoreCase(value)) {
+                    log.debug("Detected referral via identifier patient-status=Referred");
+                    return true;
+                }
+            }
+        }
+
+        // 3. FHIR standard: category contains "referral"
+        JsonNode categories = fhir.path("category");
+        if (categories.isArray()) {
+            for (JsonNode cat : categories) {
+                if (containsReferralKeyword(cat)) {
+                    log.debug("Detected referral via category coding/text");
+                    return true;
+                }
+            }
+        }
+
+        // 4. FHIR standard: code contains "referral"
+        if (containsReferralKeyword(fhir.path("code"))) {
+            log.debug("Detected referral via code coding/text");
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean containsReferralKeyword(JsonNode codeableConcept) {
+        if (codeableConcept == null || codeableConcept.isMissingNode()) return false;
+        String text = codeableConcept.path("text").asText("");
+        if (text.toLowerCase().contains("referral")) return true;
+        JsonNode coding = codeableConcept.path("coding");
+        if (coding.isArray()) {
+            for (JsonNode c : coding) {
+                String code = c.path("code").asText("").toLowerCase();
+                String display = c.path("display").asText("").toLowerCase();
+                if (code.contains("referral") || display.contains("referral")) {
+                    return true;
+                }
+                // SNOMED: 3457005 = Patient referral
+                if ("3457005".equals(c.path("code").asText(""))) return true;
+            }
+        }
+        return false;
     }
 
     private String resolveConceptFromSpiceCategory(ObjectNode fhir) {

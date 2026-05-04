@@ -29,6 +29,16 @@ openmrs:
   provider:
     fallback-name: ${OPENMRS_PROVIDER_FALLBACK_NAME:SPICE System Provider}
     fallback-identifier: ${OPENMRS_PROVIDER_FALLBACK_IDENTIFIER:SPICE-SYSTEM}
+  referral:
+    # When true, inbound SPICE ServiceRequests detected as referrals create:
+    #   - Visit at Outpatient Clinic (OPD type)
+    #   - Encounter of type "Referral In"
+    #   - Referral Order (handled by FhirToRestTransformer)
+    # Set false to fall back to the generic encounter/visit flow for referrals.
+    enabled: ${OPENMRS_REFERRAL_ENABLED:true}
+    location-uuid:        ${OPENMRS_REFERRAL_LOCATION_UUID:44c3efb0-2583-4c80-a79e-1f756a03c0a1}
+    visit-type-uuid:      ${OPENMRS_REFERRAL_VISIT_TYPE_UUID:287463d3-2233-4c69-9851-5841a1f5e109}
+    encounter-type-uuid:  ${OPENMRS_REFERRAL_ENCOUNTER_TYPE_UUID:de0f5558-9813-4fa3-8613-467015f9fabd}
 
 cce:
   security:
