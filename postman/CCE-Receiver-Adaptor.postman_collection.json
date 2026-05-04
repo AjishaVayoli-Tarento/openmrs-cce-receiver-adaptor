@@ -1,0 +1,134 @@
+{
+  "info": {
+    "name": "OpenMRS CCE Receiver Adaptor",
+    "description": "Postman collection for testing the CCE Receiver Adaptor API.\n\nEndpoint: POST /api/v1/openmrs/fhir\nAccepts FHIR R4 Bundle or standalone resources.\n\nUpdate {{base_url}} variable to match your environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8084",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string",
+      "description": "Bearer token (only needed if CCE_SECURITY_ENABLED=true)"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Actuator Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/actuator/health",
+              "host": ["{{base_url}}"],
+              "path": ["actuator", "health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ServiceRequest – Referral",
+      "item": [
+        {
+          "name": "1. Standalone ServiceRequest (Referral)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/fhir+json" },
+              { "key": "X-Correlation-ID", "value": "corr-referral-001" },
+              { "key": "X-Source-System", "value": "SPICE" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"ServiceRequest\",\n  \"id\": \"sr-referral-001\",\n  \"status\": \"active\",\n  \"intent\": \"order\",\n  \"priority\": \"routine\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"55433-2\",\n        \"display\": \"Referral note\"\n      }\n    ],\n    \"text\": \"Referral for specialist consultation\"\n  },\n  \"subject\": {\n    \"reference\": \"Patient/26922e36-e154-4648-b168-f65999a54c69\",\n    \"display\": \"JEAN PAUL MUGISHA\"\n  },\n  \"encounter\": {\n    \"reference\": \"Encounter/28222f42-6001-40e8-ab5e-8f5d80fbab87\"\n  },\n  \"authoredOn\": \"2026-04-29T10:00:00.000+0000\",\n  \"requester\": {\n    \"reference\": \"Practitioner/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\",\n    \"display\": \"Dr. Smith\"\n  },\n  \"performer\": [\n    {\n      \"reference\": \"Practitioner/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\",\n      \"display\": \"Dr. Smith\"\n    }\n  ],\n  \"reasonCode\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://snomed.info/sct\",\n          \"code\": \"44054006\",\n          \"display\": \"Diabetes mellitus type 2\"\n        }\n      ]\n    }\n  ],\n  \"note\": [\n    {\n      \"text\": \"Patient needs specialist referral for uncontrolled diabetes\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/openmrs/fhir",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "openmrs", "fhir"]
+            }
+          }
+        },
+        {
+          "name": "2. SPICE ServiceRequest (Empty code.coding + Org requester)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/fhir+json" },
+              { "key": "X-Correlation-ID", "value": "corr-spice-referral-001" },
+              { "key": "X-Source-System", "value": "SPICE" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"ServiceRequest\",\n  \"id\": \"sr-spice-001\",\n  \"identifier\": [\n    {\n      \"system\": \"http://host.docker.internal:8090/fhir/category\",\n      \"value\": \"NCD\"\n    },\n    {\n      \"system\": \"http://host.docker.internal:8090/fhir/ServiceRequest\",\n      \"value\": \"spice-sr-12345\"\n    }\n  ],\n  \"status\": \"active\",\n  \"intent\": \"order\",\n  \"priority\": \"urgent\",\n  \"code\": {\n    \"coding\": [],\n    \"text\": \"NCD Referral\"\n  },\n  \"subject\": {\n    \"reference\": \"Patient/26922e36-e154-4648-b168-f65999a54c69\"\n  },\n  \"authoredOn\": \"2026-04-29T09:30:00.000+0000\",\n  \"requester\": {\n    \"reference\": \"Organization/site-org-001\",\n    \"display\": \"SPICE Health Center\"\n  },\n  \"performer\": [\n    {\n      \"reference\": \"Practitioner/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\",\n      \"display\": \"Dr. Provider\"\n    }\n  ],\n  \"reasonCode\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://snomed.info/sct\",\n          \"code\": \"44054006\",\n          \"display\": \"Diabetes mellitus type 2\"\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/openmrs/fhir",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "openmrs", "fhir"]
+            }
+          }
+        },
+        {
+          "name": "3. Bundle – Patient + Encounter + ServiceRequest Referral",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/fhir+json" },
+              { "key": "X-Correlation-ID", "value": "corr-bundle-referral-001" },
+              { "key": "X-Source-System", "value": "CCE-Intelligence" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Bundle\",\n  \"type\": \"transaction\",\n  \"entry\": [\n    {\n      \"fullUrl\": \"urn:uuid:patient-001\",\n      \"resource\": {\n        \"resourceType\": \"Patient\",\n        \"id\": \"patient-001\",\n        \"identifier\": [\n          {\n            \"system\": \"http://fhir.openmrs.org/ext/patient/identifier\",\n            \"value\": \"NID-123456789\",\n            \"type\": {\n              \"text\": \"National ID\"\n            }\n          }\n        ],\n        \"name\": [\n          {\n            \"family\": \"Doe\",\n            \"given\": [\"John\", \"Michael\"]\n          }\n        ],\n        \"gender\": \"male\",\n        \"birthDate\": \"1985-06-15\",\n        \"address\": [\n          {\n            \"line\": [\"123 Main Street\"],\n            \"city\": \"Kigali\",\n            \"state\": \"Kigali City\",\n            \"country\": \"Rwanda\",\n            \"postalCode\": \"00100\"\n          }\n        ],\n        \"telecom\": [\n          { \"system\": \"phone\", \"value\": \"+250788123456\" },\n          { \"system\": \"email\", \"value\": \"john.doe@email.com\" }\n        ]\n      },\n      \"request\": {\n        \"method\": \"POST\",\n        \"url\": \"Patient\"\n      }\n    },\n    {\n      \"fullUrl\": \"urn:uuid:encounter-001\",\n      \"resource\": {\n        \"resourceType\": \"Encounter\",\n        \"id\": \"encounter-001\",\n        \"status\": \"finished\",\n        \"type\": [\n          {\n            \"coding\": [\n              {\n                \"system\": \"http://fhir.openmrs.org\",\n                \"code\": \"67a71486-1a54-468f-ac3e-7091a9a79584\",\n                \"display\": \"Consultation\"\n              }\n            ]\n          }\n        ],\n        \"subject\": {\n          \"reference\": \"urn:uuid:patient-001\"\n        },\n        \"period\": {\n          \"start\": \"2026-04-28T08:00:00.000+0000\"\n        }\n      },\n      \"request\": {\n        \"method\": \"POST\",\n        \"url\": \"Encounter\"\n      }\n    },\n    {\n      \"fullUrl\": \"urn:uuid:servicerequest-001\",\n      \"resource\": {\n        \"resourceType\": \"ServiceRequest\",\n        \"id\": \"servicerequest-001\",\n        \"status\": \"active\",\n        \"intent\": \"order\",\n        \"priority\": \"routine\",\n        \"code\": {\n          \"coding\": [\n            {\n              \"system\": \"http://loinc.org\",\n              \"code\": \"55433-2\",\n              \"display\": \"Referral note\"\n            }\n          ]\n        },\n        \"subject\": {\n          \"reference\": \"urn:uuid:patient-001\"\n        },\n        \"encounter\": {\n          \"reference\": \"urn:uuid:encounter-001\"\n        },\n        \"authoredOn\": \"2026-04-28T08:15:00.000+0000\",\n        \"requester\": {\n          \"reference\": \"Practitioner/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\"\n        },\n        \"performer\": [\n          {\n            \"reference\": \"Practitioner/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\"\n          }\n        ],\n        \"reasonCode\": [\n          {\n            \"coding\": [\n              {\n                \"system\": \"http://snomed.info/sct\",\n                \"code\": \"44054006\",\n                \"display\": \"Diabetes mellitus type 2\"\n              }\n            ]\n          }\n        ],\n        \"note\": [\n          {\n            \"text\": \"Referral to endocrinologist for uncontrolled Type 2 Diabetes\"\n          }\n        ]\n      },\n      \"request\": {\n        \"method\": \"POST\",\n        \"url\": \"ServiceRequest\"\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/openmrs/fhir",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "openmrs", "fhir"]
+            }
+          }
+        },
+        {
+          "name": "4. ServiceRequest – No Practitioner (Unknown Provider Fallback)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/fhir+json" },
+              { "key": "X-Correlation-ID", "value": "corr-no-practitioner-001" },
+              { "key": "X-Source-System", "value": "SPICE" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"ServiceRequest\",\n  \"id\": \"sr-no-pract-001\",\n  \"status\": \"active\",\n  \"intent\": \"order\",\n  \"priority\": \"routine\",\n  \"code\": {\n    \"coding\": [\n      {\n        \"system\": \"http://loinc.org\",\n        \"code\": \"55433-2\",\n        \"display\": \"Referral note\"\n      }\n    ]\n  },\n  \"subject\": {\n    \"reference\": \"Patient/da7f524f-27ce-4bb2-86d6-6d1d05312bd5\"\n  },\n  \"authoredOn\": \"2026-04-28T11:00:00.000+0000\",\n  \"reasonCode\": [\n    {\n      \"coding\": [\n        {\n          \"system\": \"http://snomed.info/sct\",\n          \"code\": \"38341003\",\n          \"display\": \"Hypertensive disorder\"\n        }\n      ]\n    }\n  ],\n  \"note\": [\n    {\n      \"text\": \"No practitioner specified — should fallback to Unknown Provider\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/openmrs/fhir",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "openmrs", "fhir"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
