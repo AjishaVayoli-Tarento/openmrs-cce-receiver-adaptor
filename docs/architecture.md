@@ -179,7 +179,7 @@ sequenceDiagram
     Router-->>-Proc: List‹RoutingResult›
     Proc-->>-Ctrl: ProcessingResponse
 
-    Ctrl-->>-CCE: 202 Accepted / 207 Multi-Status
+    Ctrl-->>-CCE: 202 / 207 / 422 / 503
 ```
 
 ---
@@ -560,6 +560,8 @@ Auto-fills missing fields that OpenMRS requires but FHIR considers optional. Fie
 | Task | `intent` | `"order"` |
 | Consent | `dateTime` | Current UTC timestamp |
 | Consent | `status` | `"active"` |
+
+> **Past-date coercion (`authoredOn` only).** For `ServiceRequest` and `MedicationRequest`, an incoming `authoredOn` that parses to an instant **before** `Instant.now()` is auto-corrected to the current UTC timestamp by `FhirToRestTransformer#normalizeAuthoredOnToNotBeforeNow`. This prevents OpenMRS from rejecting orders with `Order.error.dateActivatedInFuture` / `Order.error.encounterDatetimeAfterDateActivated` when payloads are produced in a different timezone or after a delivery delay. Blank or unparseable values pass through untouched. Auto-created visits derived from `authoredOn` therefore also start at the corrected instant.
 
 ### 7.5 VisitManager
 
