@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClient;
 
@@ -46,7 +47,13 @@ public class OpenMrsRestClient {
         } catch (HttpServerErrorException e) {
             log.warn("Server error on POST {}: {} - retrying", endpoint, e.getStatusCode());
             throw e;
+        } catch (HttpClientErrorException e) {
+            log.warn("Client error on POST {} to {}: {} - {}", resourceType, endpoint,
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            return RoutingResult.failure(resourceType, "REST:" + endpoint,
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
         } catch (Exception e) {
+            // Network / serialization / unexpected error — surface as 502 (Bad Gateway, retryable).
             log.error("Failed to POST {} to {}: {}", resourceType, endpoint, e.getMessage());
             return RoutingResult.failure(resourceType, "REST:" + endpoint, 502, e.getMessage());
         }
@@ -70,6 +77,11 @@ public class OpenMrsRestClient {
         } catch (HttpServerErrorException e) {
             log.warn("Server error on PUT {}/{}: {} - retrying", endpoint, uuid, e.getStatusCode());
             throw e;
+        } catch (HttpClientErrorException e) {
+            log.warn("Client error on PUT {} at {}/{}: {} - {}", resourceType, endpoint, uuid,
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            return RoutingResult.failure(resourceType, "REST:" + endpoint,
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Failed to PUT {} at {}/{}: {}", resourceType, endpoint, uuid, e.getMessage());
             return RoutingResult.failure(resourceType, "REST:" + endpoint, 502, e.getMessage());
