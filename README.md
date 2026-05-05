@@ -11,6 +11,7 @@ A Spring Boot middleware that receives FHIR R4 payloads (Bundles or standalone r
 | HAPI FHIR | 7.4.0 (R4) |
 | Gradle | Wrapper (Groovy DSL) |
 
+
 ## Architecture
 
 ```
