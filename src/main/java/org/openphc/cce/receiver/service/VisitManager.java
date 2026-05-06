@@ -191,16 +191,57 @@ public class VisitManager {
     }
 
     private String extractPatientUuid(ObjectNode node) {
-        // Try subject.reference
+        // 1. Try literal reference: subject.reference / patient.reference
         String ref = node.path("subject").path("reference").asText("");
         if (ref.isBlank()) {
             ref = node.path("patient").path("reference").asText("");
         }
-        if (ref.isBlank()) return null;
+        if (!ref.isBlank()) {
+            String[] parts = ref.split("/");
+            String tail = parts[parts.length - 1];
+            if (isUuid(tail)) return tail;
+            // Non-UUID identifier embedded in reference (e.g. "Patient/498126") — look up
+            String resolved = lookupPatientByIdentifier(tail);
+            if (resolved != null) return resolved;
+        }
 
-        // Extract UUID from ResourceType/UUID
-        String[] parts = ref.split("/");
-        return parts[parts.length - 1];
+        // 2. Fall back to identifier-based reference: subject.identifier.value
+        JsonNode identifier = node.path("subject").path("identifier");
+        if (identifier.isMissingNode()) {
+            identifier = node.path("patient").path("identifier");
+        }
+        if (!identifier.isMissingNode()) {
+            String idValue = identifier.path("value").asText("");
+            if (!idValue.isBlank()) {
+                if (isUuid(idValue)) return idValue;
+                return lookupPatientByIdentifier(idValue);
+            }
+        }
+
+        return null;
+    }
+
+    private boolean isUuid(String s) {
+        return s != null && s.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    }
+
+    private String lookupPatientByIdentifier(String identifierValue) {
+        try {
+            String response = restClient.get()
+                    .uri("/patient?identifier={id}&v=default", identifierValue)
+                    .retrieve()
+                    .body(String.class);
+            JsonNode results = objectMapper.readTree(response).path("results");
+            if (results.isArray() && !results.isEmpty()) {
+                String uuid = results.get(0).path("uuid").asText(null);
+                log.info("Resolved patient identifier '{}' to UUID: {}", identifierValue, uuid);
+                return uuid;
+            }
+            log.warn("No patient found for identifier: {}", identifierValue);
+        } catch (Exception e) {
+            log.warn("Failed to look up patient by identifier '{}': {}", identifierValue, e.getMessage());
+        }
+        return null;
     }
 
     private String extractStartDatetime(ObjectNode node) {
