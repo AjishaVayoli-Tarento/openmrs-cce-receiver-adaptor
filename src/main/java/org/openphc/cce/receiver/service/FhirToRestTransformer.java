@@ -459,9 +459,8 @@ public class FhirToRestTransformer {
             }
         }
 
-        // Patient — resolve UUID or look up by identifier
-        String patientRef = fhir.path("subject").path("reference").asText("");
-        String patientUuid = resolvePatientUuid(patientRef);
+        // Patient — resolve UUID from subject (supports both reference-based and identifier-based subjects)
+        String patientUuid = resolvePatientUuid(fhir.path("subject"));
         if (patientUuid != null) rest.put("patient", patientUuid);
 
         // Encounter — resolve UUID or create new one for the order
@@ -812,7 +811,42 @@ public class FhirToRestTransformer {
     }
 
     /**
-     * Resolves a patient UUID from a FHIR reference.
+     * Resolves a patient UUID from a FHIR subject node. Supports both styles:
+     * <ul>
+     *   <li>Literal reference: {@code subject.reference = "Patient/<uuid-or-identifier>"}</li>
+     *   <li>Identifier-based reference (no literal reference): {@code subject.identifier.value = "<spice-id>"}
+     *       — used by cce-intelligence-service when the source system only knows the SPICE patient id.</li>
+     * </ul>
+     * For non-UUID values, looks the patient up via {@code GET /patient?identifier=...}.
+     */
+    private String resolvePatientUuid(JsonNode subjectNode) {
+        if (subjectNode == null || subjectNode.isMissingNode()) return null;
+
+        // 1. Prefer literal reference if present
+        String reference = subjectNode.path("reference").asText("");
+        if (!reference.isBlank()) {
+            String resolved = resolvePatientUuid(reference);
+            if (resolved != null) return resolved;
+        }
+
+        // 2. Fall back to identifier-based reference: subject.identifier.value
+        JsonNode identifier = subjectNode.path("identifier");
+        if (!identifier.isMissingNode()) {
+            String idValue = identifier.path("value").asText("");
+            if (!idValue.isBlank()) {
+                String resolved = lookupPatientByIdentifier(idValue);
+                if (resolved != null) return resolved;
+                log.warn("Subject identifier '{}' (system='{}') did not resolve to an OpenMRS patient",
+                        idValue, identifier.path("system").asText(""));
+            }
+        }
+
+        log.warn("Could not resolve patient from subject node: {}", subjectNode);
+        return null;
+    }
+
+    /**
+     * Resolves a patient UUID from a FHIR reference string.
      * If the reference ID is already a UUID, returns it directly.
      * Otherwise, searches OpenMRS by patient identifier (e.g. NID).
      */
@@ -820,22 +854,24 @@ public class FhirToRestTransformer {
         String id = extractUuidFromReference(reference);
         if (id == null) return null;
         if (isUuid(id)) return id;
+        return lookupPatientByIdentifier(id);
+    }
 
-        // Not a UUID — search by identifier
+    private String lookupPatientByIdentifier(String identifierValue) {
         try {
             String response = restClient.get()
-                    .uri("/patient?identifier={id}&v=default", id)
+                    .uri("/patient?identifier={id}&v=default", identifierValue)
                     .retrieve()
                     .body(String.class);
             JsonNode results = objectMapper.readTree(response).path("results");
             if (results.isArray() && !results.isEmpty()) {
                 String uuid = results.get(0).path("uuid").asText(null);
-                log.info("Resolved patient identifier '{}' to UUID: {}", id, uuid);
+                log.info("Resolved patient identifier '{}' to UUID: {}", identifierValue, uuid);
                 return uuid;
             }
-            log.warn("No patient found for identifier: {}", id);
+            log.warn("No patient found for identifier: {}", identifierValue);
         } catch (Exception e) {
-            log.warn("Failed to look up patient by identifier '{}': {}", id, e.getMessage());
+            log.warn("Failed to look up patient by identifier '{}': {}", identifierValue, e.getMessage());
         }
         return null;
     }
