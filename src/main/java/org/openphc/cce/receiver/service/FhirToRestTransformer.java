@@ -30,6 +30,7 @@ public class FhirToRestTransformer {
     private final DiscoveredConfig discoveredConfig;
     private final OpenMrsConfigDiscovery configDiscovery;
     private final RestClient restClient;
+    private final PatientProvisioner patientProvisioner;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String fallbackProviderName;
     private final String fallbackProviderIdentifier;
@@ -38,12 +39,14 @@ public class FhirToRestTransformer {
                                  DiscoveredConfig discoveredConfig,
                                  OpenMrsConfigDiscovery configDiscovery,
                                  @Qualifier("openmrsRestClient") RestClient restClient,
+                                 PatientProvisioner patientProvisioner,
                                  @Value("${openmrs.provider.fallback-name:Unknown Provider}") String fallbackProviderName,
                                  @Value("${openmrs.provider.fallback-identifier:UNKNOWN}") String fallbackProviderIdentifier) {
         this.conceptResolver = conceptResolver;
         this.discoveredConfig = discoveredConfig;
         this.configDiscovery = configDiscovery;
         this.restClient = restClient;
+        this.patientProvisioner = patientProvisioner;
         this.fallbackProviderName = fallbackProviderName;
         this.fallbackProviderIdentifier = fallbackProviderIdentifier;
     }
@@ -448,11 +451,12 @@ public class FhirToRestTransformer {
     private TransformResult transformServiceRequest(ObjectNode fhir) {
         ObjectNode rest = objectMapper.createObjectNode();
 
-        // Determine order type: if ticket-type is "medicalReview" (SPICE referral), use Referral order type
-        String orderType = determineOrderType(fhir);
-        rest.put("type", orderType);
-        if ("order".equals(orderType)) {
-            // Generic order requires explicit orderType UUID — use Referral
+        // Determine order type: if ticket-type is "medicalReview" (SPICE referral), use Referral order type.
+        // The Referral OrderType in OpenMRS is bound to the TestOrder Java class, so we always
+        // post type="testorder" and supply the Referral OrderType UUID explicitly for referrals.
+        boolean referral = isReferral(fhir);
+        rest.put("type", "testorder");
+        if (referral) {
             String referralOrderTypeUuid = discoverReferralOrderTypeUuid();
             if (referralOrderTypeUuid != null) {
                 rest.put("orderType", referralOrderTypeUuid);
@@ -822,57 +826,43 @@ public class FhirToRestTransformer {
     private String resolvePatientUuid(JsonNode subjectNode) {
         if (subjectNode == null || subjectNode.isMissingNode()) return null;
 
-        // 1. Prefer literal reference if present
+        // Phase 1: collect candidate identifiers and run lookup-only resolution
+        // for both the literal reference and the FHIR identifier.
+        String refCandidate = null;
         String reference = subjectNode.path("reference").asText("");
         if (!reference.isBlank()) {
-            String resolved = resolvePatientUuid(reference);
-            if (resolved != null) return resolved;
+            String tail = extractUuidFromReference(reference);
+            if (tail != null) {
+                if (isUuid(tail)) return tail;
+                refCandidate = tail;
+                String resolved = patientProvisioner.lookup(refCandidate);
+                if (resolved != null) return resolved;
+            }
         }
 
-        // 2. Fall back to identifier-based reference: subject.identifier.value
+        String idCandidate = null;
+        String idSystem = null;
         JsonNode identifier = subjectNode.path("identifier");
         if (!identifier.isMissingNode()) {
             String idValue = identifier.path("value").asText("");
             if (!idValue.isBlank()) {
-                String resolved = lookupPatientByIdentifier(idValue);
+                idCandidate = idValue;
+                idSystem = identifier.path("system").asText("");
+                String resolved = patientProvisioner.lookup(idCandidate);
                 if (resolved != null) return resolved;
-                log.warn("Subject identifier '{}' (system='{}') did not resolve to an OpenMRS patient",
-                        idValue, identifier.path("system").asText(""));
             }
+        }
+
+        // Phase 2: every lookup failed — auto-provision a placeholder patient.
+        String createValue = idCandidate != null ? idCandidate : refCandidate;
+        if (createValue != null) {
+            String created = patientProvisioner.lookupOrCreate(createValue, idSystem);
+            if (created != null) return created;
+            log.warn("Subject identifier '{}' (system='{}') could not be resolved or auto-provisioned",
+                    createValue, idSystem);
         }
 
         log.warn("Could not resolve patient from subject node: {}", subjectNode);
-        return null;
-    }
-
-    /**
-     * Resolves a patient UUID from a FHIR reference string.
-     * If the reference ID is already a UUID, returns it directly.
-     * Otherwise, searches OpenMRS by patient identifier (e.g. NID).
-     */
-    private String resolvePatientUuid(String reference) {
-        String id = extractUuidFromReference(reference);
-        if (id == null) return null;
-        if (isUuid(id)) return id;
-        return lookupPatientByIdentifier(id);
-    }
-
-    private String lookupPatientByIdentifier(String identifierValue) {
-        try {
-            String response = restClient.get()
-                    .uri("/patient?identifier={id}&v=default", identifierValue)
-                    .retrieve()
-                    .body(String.class);
-            JsonNode results = objectMapper.readTree(response).path("results");
-            if (results.isArray() && !results.isEmpty()) {
-                String uuid = results.get(0).path("uuid").asText(null);
-                log.info("Resolved patient identifier '{}' to UUID: {}", identifierValue, uuid);
-                return uuid;
-            }
-            log.warn("No patient found for identifier: {}", identifierValue);
-        } catch (Exception e) {
-            log.warn("Failed to look up patient by identifier '{}': {}", identifierValue, e.getMessage());
-        }
         return null;
     }
 
