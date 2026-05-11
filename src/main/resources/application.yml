@@ -40,6 +40,16 @@ openmrs:
     visit-type-uuid:      ${OPENMRS_REFERRAL_VISIT_TYPE_UUID:287463d3-2233-4c69-9851-5841a1f5e109}
     encounter-type-uuid:  ${OPENMRS_REFERRAL_ENCOUNTER_TYPE_UUID:de0f5558-9813-4fa3-8613-467015f9fabd}
 
+spice:
+  fhir:
+    enabled: ${SPICE_FHIR_ENABLED:false}
+    base-url: ${SPICE_FHIR_BASE_URL:}
+    token: ${SPICE_FHIR_TOKEN:}
+    client: ${SPICE_FHIR_CLIENT:job}
+    lookup-resource: ${SPICE_FHIR_LOOKUP_RESOURCE:RelatedPerson}
+    identifier-system: ${SPICE_FHIR_IDENTIFIER_SYSTEM:http://mdtlabs.com/national-id}
+    timeout: ${SPICE_FHIR_TIMEOUT:30000}
+
 cce:
   security:
     enabled: ${CCE_SECURITY_ENABLED:false}
