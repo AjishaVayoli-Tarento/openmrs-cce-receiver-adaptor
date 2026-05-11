@@ -29,14 +29,17 @@ public class VisitManager {
     private final RestClient restClient;
     private final DiscoveredConfig discoveredConfig;
     private final ReferralProperties referralProperties;
+    private final PatientProvisioner patientProvisioner;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public VisitManager(@Qualifier("openmrsRestClient") RestClient restClient,
                         DiscoveredConfig discoveredConfig,
-                        ReferralProperties referralProperties) {
+                        ReferralProperties referralProperties,
+                        PatientProvisioner patientProvisioner) {
         this.restClient = restClient;
         this.discoveredConfig = discoveredConfig;
         this.referralProperties = referralProperties;
+        this.patientProvisioner = patientProvisioner;
     }
 
     public ObjectNode ensureVisit(ObjectNode encounterNode, Map<String, String> perRequestVisitCache) {
@@ -191,7 +194,8 @@ public class VisitManager {
     }
 
     private String extractPatientUuid(ObjectNode node) {
-        // 1. Try literal reference: subject.reference / patient.reference
+        // Phase 1: collect candidate identifiers and run lookup-only resolution.
+        String refCandidate = null;
         String ref = node.path("subject").path("reference").asText("");
         if (ref.isBlank()) {
             ref = node.path("patient").path("reference").asText("");
@@ -200,12 +204,13 @@ public class VisitManager {
             String[] parts = ref.split("/");
             String tail = parts[parts.length - 1];
             if (isUuid(tail)) return tail;
-            // Non-UUID identifier embedded in reference (e.g. "Patient/498126") — look up
-            String resolved = lookupPatientByIdentifier(tail);
+            refCandidate = tail;
+            String resolved = patientProvisioner.lookup(refCandidate);
             if (resolved != null) return resolved;
         }
 
-        // 2. Fall back to identifier-based reference: subject.identifier.value
+        String idCandidate = null;
+        String idSystem = null;
         JsonNode identifier = node.path("subject").path("identifier");
         if (identifier.isMissingNode()) {
             identifier = node.path("patient").path("identifier");
@@ -214,10 +219,20 @@ public class VisitManager {
             String idValue = identifier.path("value").asText("");
             if (!idValue.isBlank()) {
                 if (isUuid(idValue)) return idValue;
-                return lookupPatientByIdentifier(idValue);
+                idCandidate = idValue;
+                idSystem = identifier.path("system").asText("");
+                String resolved = patientProvisioner.lookup(idCandidate);
+                if (resolved != null) return resolved;
             }
         }
 
+        // Phase 2: every lookup failed — auto-provision a placeholder patient
+        // using the best available candidate (prefer subject.identifier.value
+        // since it carries an explicit system, fall back to the reference tail).
+        String createValue = idCandidate != null ? idCandidate : refCandidate;
+        if (createValue != null) {
+            return patientProvisioner.lookupOrCreate(createValue, idSystem);
+        }
         return null;
     }
 
@@ -225,24 +240,6 @@ public class VisitManager {
         return s != null && s.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     }
 
-    private String lookupPatientByIdentifier(String identifierValue) {
-        try {
-            String response = restClient.get()
-                    .uri("/patient?identifier={id}&v=default", identifierValue)
-                    .retrieve()
-                    .body(String.class);
-            JsonNode results = objectMapper.readTree(response).path("results");
-            if (results.isArray() && !results.isEmpty()) {
-                String uuid = results.get(0).path("uuid").asText(null);
-                log.info("Resolved patient identifier '{}' to UUID: {}", identifierValue, uuid);
-                return uuid;
-            }
-            log.warn("No patient found for identifier: {}", identifierValue);
-        } catch (Exception e) {
-            log.warn("Failed to look up patient by identifier '{}': {}", identifierValue, e.getMessage());
-        }
-        return null;
-    }
 
     private String extractStartDatetime(ObjectNode node) {
         // Try period.start from encounter
