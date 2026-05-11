@@ -12,7 +12,7 @@ services:
       dockerfile: Dockerfile
     container_name: openmrs-cce-receiver-adaptor
     ports:
-      - "8084:8080"
+      - "8097:8080"
     environment:
       # Point to the O3 gateway container on the shared network
       OPENMRS_REST_BASE_URL: ${OPENMRS_REST_BASE_URL:-http://o3-gateway-1:80/openmrs/ws/rest/v1}
@@ -26,6 +26,14 @@ services:
       OPENMRS_IDGEN_SOURCE_UUID: ""
       OPENMRS_IDENTIFIER_TYPE_NAME: "OpenMRS ID"
       OPENMRS_CAPABILITY_REFRESH_MS: "21600000"
+      # SPICE FHIR demographic enrichment for placeholder patients.
+      # Static bearer token is used for auth (set via .env or per-env overrides).
+      SPICE_FHIR_ENABLED: ${SPICE_FHIR_ENABLED:-true}
+      SPICE_FHIR_BASE_URL: ${SPICE_FHIR_BASE_URL:-https://spice-dev-backend.uhis.labsplatform.com/fhir-server/fhir}
+      SPICE_FHIR_TOKEN: ${SPICE_FHIR_TOKEN:-}
+      SPICE_FHIR_CLIENT: ${SPICE_FHIR_CLIENT:-mob}
+      SPICE_FHIR_LOOKUP_RESOURCE: ${SPICE_FHIR_LOOKUP_RESOURCE:-RelatedPerson}
+      SPICE_FHIR_IDENTIFIER_SYSTEM: ${SPICE_FHIR_IDENTIFIER_SYSTEM:-http://mdtlabs.com/national-id}
       CCE_SECURITY_ENABLED: "false"
       CCE_SECURITY_TOKEN: ""
       LOG_LEVEL: INFO
@@ -39,6 +47,8 @@ services:
       start_period: 30s
     networks:
       - o3_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
   o3_network:

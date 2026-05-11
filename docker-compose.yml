@@ -88,12 +88,13 @@ services:
   # ─── CCE Receiver Adaptor ──────────────────────────────────────────
 
   openmrs-cce-receiver-adaptor:
+    image: openmrs-cce-receiver-adaptor:demo
     build:
       context: .
       dockerfile: Dockerfile
     container_name: openmrs-cce-receiver-adaptor
     ports:
-      - "8084:8080"
+      - "8097:8080"
     depends_on:
       backend:
         condition: service_healthy
