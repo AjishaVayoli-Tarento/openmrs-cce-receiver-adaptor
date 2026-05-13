@@ -90,6 +90,20 @@ curl -X POST http://localhost:8080/api/v1/openmrs/fhir \
 | Order fails with "encounter required" | Standalone ServiceRequest/MedicationRequest without encounter reference | Adaptor auto-creates encounter; check VisitManager logs for encounter creation; verify "Consultation" encounter type exists |
 | Duplicate encounters created for orders | Each standalone order creates a new encounter by design | This is expected behaviour — reusing encounters would be semantically incorrect |
 
+### Notification (POST /alert) Issues
+
+Log source: `OpenMrsNotificationClient`, `RecipientResolver`. Notification failures NEVER fail the referral order create — search for `WARN` lines.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Referral created but no toast in O3 | Notifications disabled | Confirm `OPENMRS_NOTIFICATION_ENABLED=true` |
+| `Skipping notify — no recipients resolved` | Empty recipients list | Set `OPENMRS_NOTIFICATION_RECIPIENTS_STATIC_UUIDS` to a real OpenMRS user UUID for this env |
+| `Failed to push alert ... 400 BAD_REQUEST ... dateToExpire ... malformed` | Date format mismatch (regression) | Ensure `dateToExpire` is formatted with `yyyy-MM-dd'T'HH:mm:ss.SSSZ` (numeric offset, not `Z`). Currently handled in `OpenMrsNotificationClient` |
+| `Failed to push alert ... 400 ... recipient` | UUID is a person UUID, not a user UUID | Re-resolve via `GET /user?v=custom:(uuid,display)` |
+| Toast pops for old test alerts | OpenMRS retains all unread alerts; ESM polls every 30s | Mark old alerts read in OpenMRS DB or wait for `dateToExpire` |
+| Same alert fired twice | Dedupe TTL too short, or upstream retry storm | Raise `OPENMRS_NOTIFICATION_DEDUPE_TTL_HOURS` |
+| `Pushed alert ... to N recipient(s)` where N is unexpectedly high | `role-or-static` policy + OpenMRS `/user?role=` returns all users (server-side filter is a no-op) | Switch `OPENMRS_NOTIFICATION_RECIPIENTS_POLICY=static` |
+
 ---
 
 ## Log Format

@@ -74,6 +74,36 @@
 |----------|---------|---------|-------------|
 | `openmrs.capability-refresh-ms` | `OPENMRS_CAPABILITY_REFRESH_MS` | `21600000` | Config re-discovery interval (6 hours) |
 
+### OpenMRS Notifications (POST /alert)
+
+Fire-and-forget user-facing alert pushed to OpenMRS after a successful **referral order** create. Surfaces in the OpenMRS 3 SPA bell + top-right toast via the **CCE Notifications** ESM. Failures never break the referral routing flow. See [openmrs-notification-integration.md](openmrs-notification-integration.md) for the wire contract.
+
+| Property | Env Var | Default | Description |
+|----------|---------|---------|-------------|
+| `openmrs.notification.enabled` | `OPENMRS_NOTIFICATION_ENABLED` | `true` | Master switch — when `false`, no `POST /alert` is made |
+| `openmrs.notification.expire-hours` | `OPENMRS_NOTIFICATION_EXPIRE_HOURS` | `48` | TTL written to `dateToExpire`; ESM hides expired alerts |
+| `openmrs.notification.recipients.policy` | `OPENMRS_NOTIFICATION_RECIPIENTS_POLICY` | `static` | One of `role`, `static`, `role-or-static` |
+| `openmrs.notification.recipients.role` | `OPENMRS_NOTIFICATION_RECIPIENTS_ROLE` | `Clinician` | Role name for the `role` lookup. **Note**: OpenMRS `/user?role=` does **not** filter server-side — all non-retired users come back |
+| `openmrs.notification.recipients.static-uuids` | `OPENMRS_NOTIFICATION_RECIPIENTS_STATIC_UUIDS` | *(local admin uuid)* | Comma-separated OpenMRS **user** UUIDs (not person UUIDs). **MUST be overridden per environment** |
+| `openmrs.notification.recipients.cache-ttl-seconds` | `OPENMRS_NOTIFICATION_RECIPIENTS_CACHE_TTL_SECONDS` | `300` | In-memory cache TTL for resolved recipient lists |
+| `openmrs.notification.dedupe.ttl-hours` | `OPENMRS_NOTIFICATION_DEDUPE_TTL_HOURS` | `24` | Suppress duplicate alerts for the same `ServiceRequest.id` within this window |
+
+**Severity** is derived from the inbound FHIR `ServiceRequest`, not configured:
+
+| Signal | Result |
+|---|---|
+| `priority = stat` / `asap` | `CRITICAL` |
+| `priority = urgent` | `WARNING` |
+| else | `INFO` |
+| **+** identifier value or `patientInstruction` contains `"high risk"` / `"critical"` / `"emergency"` | bumped one level (INFO→WARNING, WARNING→CRITICAL) |
+
+Resolve user UUIDs with:
+
+```bash
+curl -s -u <user>:<pwd> \
+  "$OPENMRS_REST_BASE_URL/user?v=custom:(uuid,display)" | jq
+```
+
 ### Logging
 
 | Property | Env Var | Default | Description |
@@ -118,6 +148,8 @@ OPENMRS_AUTH_USERNAME=admin
 OPENMRS_AUTH_PASSWORD=Admin123
 CCE_SECURITY_ENABLED=false
 LOG_LEVEL_APP=DEBUG
+# Notifications: set to a real OpenMRS user UUID for this environment
+OPENMRS_NOTIFICATION_RECIPIENTS_STATIC_UUIDS=82f18b44-6814-11e8-923f-e9a88dcb533f
 ```
 
 ## Example: Production

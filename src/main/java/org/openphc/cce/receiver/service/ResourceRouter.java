@@ -28,6 +28,8 @@ public class ResourceRouter {
     private final OpenMrsRestClient openMrsRestClient;
     private final OpenMrsFhirClient openMrsFhirClient;
     private final ReferralProperties referralProperties;
+    private final OpenMrsNotificationClient notificationClient;
+    private final RecipientResolver recipientResolver;
 
     private static final Set<String> FHIR_ONLY_TYPES = Set.of(
             "Task", "DiagnosticReport", "Procedure",
@@ -50,7 +52,9 @@ public class ResourceRouter {
                           FhirToRestTransformer fhirToRestTransformer,
                           OpenMrsRestClient openMrsRestClient,
                           OpenMrsFhirClient openMrsFhirClient,
-                          ReferralProperties referralProperties) {
+                          ReferralProperties referralProperties,
+                          OpenMrsNotificationClient notificationClient,
+                          RecipientResolver recipientResolver) {
         this.referenceResolver = referenceResolver;
         this.conceptResolver = conceptResolver;
         this.requiredFieldEnricher = requiredFieldEnricher;
@@ -60,6 +64,8 @@ public class ResourceRouter {
         this.openMrsRestClient = openMrsRestClient;
         this.openMrsFhirClient = openMrsFhirClient;
         this.referralProperties = referralProperties;
+        this.notificationClient = notificationClient;
+        this.recipientResolver = recipientResolver;
     }
 
     public List<RoutingResult> routeAll(List<ResourceEntry> entries) {
@@ -158,12 +164,153 @@ public class ResourceRouter {
         // Determine create vs update
         String existingUuid = resolveExistingUuid(resourceNode, resourceType, entry);
 
+        RoutingResult result;
         if (existingUuid != null) {
-            return openMrsRestClient.update(transformResult.endpoint(), existingUuid,
+            result = openMrsRestClient.update(transformResult.endpoint(), existingUuid,
                     transformResult.payload(), resourceType);
         } else {
-            return openMrsRestClient.create(transformResult.endpoint(), transformResult.payload(), resourceType);
+            result = openMrsRestClient.create(transformResult.endpoint(), transformResult.payload(), resourceType);
         }
+
+        // [7] Fire user-facing notification for newly-created referral orders.
+        // Fire-and-forget — never propagates failures into the routing result.
+        if ("ServiceRequest".equals(resourceType)
+                && "created".equals(result.status())
+                && referralProperties.isEnabled()
+                && fhirToRestTransformer.isReferral(resourceNode)) {
+            fireReferralNotification(resourceNode, result);
+        }
+
+        return result;
+    }
+
+    private void fireReferralNotification(ObjectNode resourceNode, RoutingResult result) {
+        try {
+            String patientUuid = extractPatientUuid(resourceNode);
+            String link = patientUuid != null
+                    ? "/openmrs/spa/patient/" + patientUuid + "/chart/Referrals"
+                    : null;
+
+            String body = "Patient routed for review";
+            String label = patientLabelFromOrderResponse(result.responseBody());
+            if (label == null) {
+                label = shortPatientLabel(resourceNode, patientUuid);
+            }
+            if (label != null) {
+                body = "Patient " + label + " has been referred";
+            }
+
+            String dedupeKey = "ServiceRequest:" + safe(resourceNode.path("id").asText(null));
+
+            String severity = resolveSeverity(resourceNode);
+
+            List<String> recipients = recipientResolver.resolveForReferral(resourceNode);
+            if (recipients.isEmpty()) {
+                log.info("No notification recipients resolved for referral {}", result.resourceId());
+                return;
+            }
+            notificationClient.notify(
+                    new OpenMrsNotificationClient.NotificationPayload(
+                            "REFERRAL_ARRIVED",
+                            severity,
+                            "New referral received",
+                            body,
+                            link),
+                    recipients,
+                    dedupeKey);
+        } catch (Exception e) {
+            // Defensive — notification must never break the routing flow.
+            log.warn("Failed to fire referral notification: {}", e.toString());
+        }
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
+    }
+
+    private String extractPatientUuid(ObjectNode resourceNode) {
+        String ref = resourceNode.path("subject").path("reference").asText("");
+        if (ref.isBlank()) return null;
+        int slash = ref.lastIndexOf('/');
+        String tail = slash >= 0 ? ref.substring(slash + 1) : ref;
+        return tail.isBlank() ? null : tail;
+    }
+
+    private String shortPatientLabel(ObjectNode resourceNode, String patientUuid) {
+        // Prefer a display label if upstream resolution set one; otherwise show
+        // a truncated UUID so clinicians can correlate across UI surfaces.
+        String display = resourceNode.path("subject").path("display").asText(null);
+        if (display != null && !display.isBlank()) return display;
+        if (patientUuid != null && patientUuid.length() >= 8) return patientUuid.substring(0, 8);
+        return null;
+    }
+
+    /**
+     * Extracts a human-friendly patient label from the {@code POST /order} response,
+     * which OpenMRS returns with a nested {@code patient.display} like
+     * {@code "1234567890222 - Xerta Xerta"}. Returns the trailing name portion when present.
+     */
+    private String patientLabelFromOrderResponse(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) return null;
+        try {
+            String display = objectMapper.readTree(responseBody)
+                    .path("patient").path("display").asText(null);
+            if (display == null || display.isBlank()) return null;
+            int dash = display.indexOf(" - ");
+            String name = dash >= 0 ? display.substring(dash + 3).trim() : display.trim();
+            return name.isEmpty() ? null : name;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Maps a FHIR ServiceRequest to a UI severity (INFO | WARNING | CRITICAL).
+     *
+     * <p>Rules (highest match wins):
+     * <ol>
+     *   <li>{@code priority = stat | asap} → CRITICAL</li>
+     *   <li>{@code priority = urgent} → WARNING</li>
+     *   <li>Any identifier value or {@code patientInstruction} containing
+     *       "high risk", "critical", or "emergency" upgrades INFO→WARNING and
+     *       WARNING→CRITICAL.</li>
+     *   <li>Default → INFO</li>
+     * </ol>
+     */
+    private String resolveSeverity(ObjectNode resourceNode) {
+        String severity;
+        String priority = resourceNode.path("priority").asText("").toLowerCase();
+        severity = switch (priority) {
+            case "stat", "asap" -> "CRITICAL";
+            case "urgent" -> "WARNING";
+            default -> "INFO";
+        };
+
+        if (containsRiskKeyword(resourceNode)) {
+            severity = switch (severity) {
+                case "INFO" -> "WARNING";
+                case "WARNING" -> "CRITICAL";
+                default -> severity;
+            };
+        }
+        return severity;
+    }
+
+    private boolean containsRiskKeyword(ObjectNode resourceNode) {
+        String instruction = resourceNode.path("patientInstruction").asText("").toLowerCase();
+        if (matchesRisk(instruction)) return true;
+
+        JsonNode identifiers = resourceNode.path("identifier");
+        if (identifiers.isArray()) {
+            for (JsonNode id : identifiers) {
+                if (matchesRisk(id.path("value").asText("").toLowerCase())) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesRisk(String s) {
+        return s.contains("high risk") || s.contains("critical") || s.contains("emergency");
     }
 
     private RoutingResult routeViaFhir(ObjectNode resourceNode, String resourceType) {

@@ -75,6 +75,13 @@ The adaptor is the **receiver** component in the CCE architecture — it receive
 │  │  POST/PUT → /ws/rest/v1  │  │  POST/PUT → /ws/fhir2/R4    │          │
 │  └──────────┬───────────────┘  └──────────┬───────────────────┘          │
 │             │                              │                             │
+│  ┌──────────┴──── Notification side-effect (ServiceRequest only) ─────┐  │
+│  │  ResourceRouter.fireReferralNotification(resource, routingResult)  │  │
+│  │   ├─ RecipientResolver           → GET  /ws/rest/v1/user           │  │
+│  │   └─ OpenMrsNotificationClient   → POST /ws/rest/v1/alert          │  │
+│  │      (fire-and-forget; in-memory dedupe by ServiceRequest.id)      │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                           │
 │  ┌──────────────────────────────────────────────────────────────────┐    │
 │  │                       Support Layer                              │    │
 │  │  OpenMrsProperties │ DiscoveredConfig │ OpenMrsConfigDiscovery   │    │
@@ -181,6 +188,8 @@ sequenceDiagram
 
     Ctrl-->>-CCE: 202 / 207 / 422 / 503
 ```
+
+> **Notification side-effect.** After a successful `ServiceRequest → /order` create that the transformer recognises as a referral, `ResourceRouter.fireReferralNotification` resolves recipient user UUIDs via `RecipientResolver` (policy = `role` / `static` / `role-or-static`) and pushes a single `POST /ws/rest/v1/alert` per `ServiceRequest.id` (in-memory dedupe). The call is fire-and-forget and **never** fails the routing flow. See [openmrs-notification-integration.md](openmrs-notification-integration.md).
 
 ---
 

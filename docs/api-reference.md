@@ -205,6 +205,7 @@ The adaptor returns one of the following status codes based on the per-resource 
 | POST | `/condition` | Create condition |
 | POST | `/allergy` | Create allergy |
 | POST | `/order` | Create test order or drug order |
+| POST | `/alert` | Push user-facing notification (fire-and-forget, after a referral order create) |
 | POST | `/visit` | Create visit |
 | POST | `/provider` | Create provider |
 | POST | `/location` | Create location |
@@ -222,6 +223,7 @@ The adaptor returns one of the following status codes based on the per-resource 
 | GET | `/visit?patient={uuid}&includeInactive=false` | Find active visits |
 | GET | `/idgen/identifiersource` | Discover identifier sources |
 | GET | `/personattributetype` | Discover person attribute types |
+| GET | `/user?role={role}&v=custom:(uuid)` | Resolve notification recipients (role-based policy). Server-side role filter is currently a no-op — see [openmrs-notification-integration.md](openmrs-notification-integration.md). |
 
 ### FHIR R4 API (`/ws/fhir2/R4`) — Fallback
 
