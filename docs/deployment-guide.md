@@ -165,6 +165,7 @@ The adaptor performs these steps on startup:
 - [ ] OpenMRS credentials configured (not hardcoded)
 - [ ] Inbound security enabled for production (`CCE_SECURITY_ENABLED=true`)
 - [ ] Inbound credentials are strong and injected via secrets
+- [ ] `OPENMRS_NOTIFICATION_RECIPIENTS_STATIC_UUIDS` overridden with real OpenMRS **user** UUID(s) for the target environment (the baked-in default is a local-dev admin UUID and will not exist in EC2/prod)
 
 ### Verification
 

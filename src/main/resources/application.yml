@@ -39,6 +39,20 @@ openmrs:
     location-uuid:        ${OPENMRS_REFERRAL_LOCATION_UUID:44c3efb0-2583-4c80-a79e-1f756a03c0a1}
     visit-type-uuid:      ${OPENMRS_REFERRAL_VISIT_TYPE_UUID:287463d3-2233-4c69-9851-5841a1f5e109}
     encounter-type-uuid:  ${OPENMRS_REFERRAL_ENCOUNTER_TYPE_UUID:de0f5558-9813-4fa3-8613-467015f9fabd}
+  notification:
+    # When true, the adaptor fires a fire-and-forget POST /alert after a
+    # successful referral order create. See docs/openmrs-notification-integration.md.
+    enabled: ${OPENMRS_NOTIFICATION_ENABLED:true}
+    expire-hours: ${OPENMRS_NOTIFICATION_EXPIRE_HOURS:48}
+    recipients:
+      # Policy: role | static | role-or-static
+      policy: ${OPENMRS_NOTIFICATION_RECIPIENTS_POLICY:static}
+      role: ${OPENMRS_NOTIFICATION_RECIPIENTS_ROLE:Clinician}
+      # Comma-separated fallback list of OpenMRS user UUIDs.
+      static-uuids: ${OPENMRS_NOTIFICATION_RECIPIENTS_STATIC_UUIDS:82f18b44-6814-11e8-923f-e9a88dcb533f}
+      cache-ttl-seconds: ${OPENMRS_NOTIFICATION_RECIPIENTS_CACHE_TTL_SECONDS:300}
+    dedupe:
+      ttl-hours: ${OPENMRS_NOTIFICATION_DEDUPE_TTL_HOURS:24}
 
 spice:
   fhir:
