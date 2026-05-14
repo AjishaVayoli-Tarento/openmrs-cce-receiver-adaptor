@@ -186,7 +186,15 @@ public class ResourceRouter {
 
     private void fireReferralNotification(ObjectNode resourceNode, RoutingResult result) {
         try {
-            String patientUuid = extractPatientUuid(resourceNode);
+            // Prefer the resolved OpenMRS patient UUID returned by POST /order.
+            // The inbound FHIR ServiceRequest.subject.reference is often the
+            // upstream source identifier (e.g. SPICE national-id) and would
+            // produce a broken /openmrs/spa/patient/{id}/chart link.
+            String patientUuid = patientUuidFromOrderResponse(result.responseBody());
+            if (patientUuid == null) {
+                String fallback = extractPatientUuid(resourceNode);
+                if (isUuid(fallback)) patientUuid = fallback;
+            }
             String link = patientUuid != null
                     ? "/openmrs/spa/patient/" + patientUuid + "/chart/Referrals"
                     : null;
@@ -243,6 +251,30 @@ public class ResourceRouter {
         if (display != null && !display.isBlank()) return display;
         if (patientUuid != null && patientUuid.length() >= 8) return patientUuid.substring(0, 8);
         return null;
+    }
+
+    private static final java.util.regex.Pattern UUID_PATTERN = java.util.regex.Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    private static boolean isUuid(String s) {
+        return s != null && UUID_PATTERN.matcher(s).matches();
+    }
+
+    /**
+     * Extracts the resolved OpenMRS patient UUID from the {@code POST /order}
+     * response body ({@code patient.uuid}). This is the only place the real
+     * OpenMRS UUID is available — the inbound FHIR ref usually carries the
+     * upstream source identifier.
+     */
+    private String patientUuidFromOrderResponse(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) return null;
+        try {
+            String uuid = objectMapper.readTree(responseBody)
+                    .path("patient").path("uuid").asText(null);
+            return isUuid(uuid) ? uuid : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
